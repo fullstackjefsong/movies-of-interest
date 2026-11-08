@@ -5,8 +5,8 @@ a browser interface, and a Windows installer with a bundled Node runtime.
 
 ## Install (Windows 10/11, x64)
 
-**[Download the installer](https://github.com/fullstackjefsong/movies-of-interest/releases/latest/download/MoviesOfInterest-Setup-1.0.0.exe)**
-(`MoviesOfInterest-Setup-1.0.0.exe`, from the
+**[Download the installer](https://github.com/fullstackjefsong/movies-of-interest/releases/latest/download/MoviesOfInterest-Setup-1.0.1.exe)**
+(`MoviesOfInterest-Setup-1.0.1.exe`, from the
 [latest release](https://github.com/fullstackjefsong/movies-of-interest/releases/latest)).
 **Do not download Source code or "Download ZIP"** to install the app. Run the setup wizard; no Node, Python, database tools or scripting are
 needed. Installation is per-user and does not require administrator privileges.
@@ -30,6 +30,10 @@ from the same release. A checksum alone does not establish publisher trust.
 - Add a title, choose **Movie** or **TV show**, search and select the matching
   release. Available metadata fills in automatically. Ambiguous titles are
   never silently matched. Manual entry works offline.
+- Search forgives typos: `godfathr`, `intersteller` or `brekin bad` still find
+  the right title, with "Did you mean" suggestions and a one-click switch
+  between movie and TV search. Adding a year (`dune 2021`) ranks that release
+  first.
 - Addition order is the default. Sort by title, release year, source rating,
   runtime, director, recently viewed, or newest addition. Filter all/viewed/
   unviewed, type and genre; search title, cast, directors, genres and notes.

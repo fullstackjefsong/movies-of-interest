@@ -3,7 +3,7 @@
 class MetadataError extends Error {
   constructor(message) { super(message); this.name = 'MetadataError'; }
 }
-const USER_AGENT = 'MoviesOfInterest/1.0 (local-first personal watchlist; Node.js)';
+const USER_AGENT = 'MoviesOfInterest/1.0 (local-first personal watchlist; https://github.com/fullstackjefsong/movies-of-interest)';
 async function request(url, token = '', transport = fetch) {
   const headers = { 'User-Agent': USER_AGENT, Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -37,7 +37,7 @@ function claim(entity, property) {
 async function wikidata(ids, transport) {
   return request(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(ids.join('|'))}&props=labels%7Cclaims%7Csitelinks&languages=en%7Cmul&format=json`, '', transport);
 }
-async function lookup(query, kind, settings, transport = fetch) {
+async function searchSource(query, kind, settings, transport) {
   if (settings.tmdbToken) {
     const data = await request(`https://api.themoviedb.org/3/search/${kind}?query=${encodeURIComponent(query)}&include_adult=false&language=en-US`, settings.tmdbToken, transport);
     return { results: (data.results || []).slice(0, 12).map(item => ({
@@ -59,11 +59,133 @@ async function lookup(query, kind, settings, transport = fetch) {
     return claim(entity, 'P345').some(value => /^tt\d+$/.test(value))
       || claim(entity, 'P31').some(value => ['Q11424', 'Q24869', 'Q202866', 'Q5398426', 'Q506240'].includes(value.id))
       || /\b(film|movie)\b.*\b(directed|released)\b|\b(short film|feature film|animated film|television film)\b/i.test(item.description || '');
-  }).filter(item => !/\b(television series|tv series|television episode|video game|novel|album|song)\b/i.test(item.description || ''));
+  }).filter(item => !/\b(television series|tv series|television episode|episode of|video game|novel|album|song)\b/i.test(item.description || ''));
   return { results: candidates.slice(0, 12).map(item => ({
     ...base('wikidata', item.id, item.label, 'movie'),
     year: yearFromEntity(full.entities[item.id]), summary: item.description || '',
   })), notice: 'Wikidata movie matches. Some records lack posters, ratings or cast. No availability is verified in keyless mode.' };
+}
+
+const STRONG_MATCH = 0.88;
+const STOP_WORDS = new Set(['the', 'a', 'an', 'of', 'and']);
+const COMMON_TYPOS = { teh: 'the', hte: 'the', adn: 'and', nad: 'and' };
+function normalize(value) {
+  return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^the /, '');
+}
+// Optimal string alignment distance: Levenshtein plus adjacent transpositions ("teh" -> "the").
+function distance(a, b) {
+  const rows = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) rows[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      rows[i][j] = Math.min(rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) rows[i][j] = Math.min(rows[i][j], rows[i - 2][j - 2] + 1);
+    }
+  }
+  return rows[a.length][b.length];
+}
+const ratio = (a, b) => (a || b) ? 1 - distance(a, b) / Math.max(a.length, b.length) : 1;
+function similarity(title, query) {
+  const a = normalize(title), b = normalize(query);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  let score = ratio(a, b);
+  if (b.length >= 3 && a.startsWith(b)) score = Math.max(score, 0.8 + 0.1 * (b.length / a.length));
+  const words = b.split(' ').filter(word => !STOP_WORDS.has(word));
+  const titleWords = a.split(' ');
+  if (words.length) {
+    const perWord = words.map(word => Math.max(...titleWords.map(candidate => ratio(candidate, word))));
+    const coverage = Math.min(1, words.length / titleWords.filter(word => !STOP_WORDS.has(word)).length || 1);
+    score = Math.max(score, (perWord.reduce((sum, value) => sum + value, 0) / words.length) * (0.7 + 0.3 * coverage));
+  }
+  return Math.min(1, score);
+}
+function tidy(query) {
+  return query.normalize('NFKC').replace(/\s+/g, ' ').trim().split(' ')
+    .map(word => COMMON_TYPOS[word.toLowerCase()] || word).join(' ');
+}
+function releaseYear(query) {
+  const match = /^(.+?)[\s,]+\(?((?:18|19|20)\d\d)\)?$/.exec(query);
+  const year = match ? Number(match[2]) : null;
+  return year && year <= new Date().getFullYear() + 5 ? { title: match[1].trim(), year } : null;
+}
+async function optional(promise) {
+  try { return await promise; }
+  catch (error) { if (error instanceof MetadataError) return null; throw error; }
+}
+// Wikipedia's search corrects spelling ("did you mean") and supports per-word fuzzy title matching.
+async function corrections(query, kind, transport) {
+  const hint = kind === 'tv' ? 'television series' : 'film';
+  const wiki = search => request(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(search)}&srinfo=suggestion&srprop=&srlimit=8&format=json`, '', transport);
+  const strip = value => String(value || '').replace(new RegExp(`\\s*${hint}$`, 'i'), '').trim();
+  const words = normalize(query).split(' ').filter(word => word && !STOP_WORDS.has(word)).slice(0, 6);
+  const fuzzy = words.map(word => `intitle:${word}${word.length >= 4 ? '~' : ''}`).join(' ');
+  const [spelled, titled] = await Promise.all([optional(wiki(`${query} ${hint}`)), fuzzy ? optional(wiki(`${fuzzy} ${hint}`)) : null]);
+  let suggestion = strip(spelled?.query?.searchinfo?.suggestion);
+  if (suggestion) {
+    const refined = strip((await optional(wiki(`${suggestion} ${hint}`)))?.query?.searchinfo?.suggestion);
+    if (refined) suggestion = refined;
+  }
+  const media = /\((?:\d{4} )?(?:[\w-]+ )*(?:film|movie|tv series|television series|miniseries|series|tv program|programme)\)$/i;
+  const titles = [...(spelled?.query?.search || []), ...(titled?.query?.search || [])].map(hit => hit.title)
+    .filter(title => !/^list of /i.test(title) && (!/\)$/.test(title) || media.test(title)))
+    .map(title => title.replace(/\s*\([^)]*\)$/, ''))
+    .map(title => ({ title, score: similarity(title, query) })).filter(item => item.score >= 0.6)
+    .sort((a, b) => b.score - a.score).map(item => item.title);
+  return { suggestion, titles };
+}
+async function lookup(query, kind, settings, transport = fetch) {
+  const typed = tidy(query);
+  const year = releaseYear(typed);
+  const base = year ? year.title : typed;
+  const queries = [typed];
+  const merged = new Map();
+  const typedScore = title => Math.max(similarity(title, typed), similarity(title, base));
+  const add = (results, origin, minimum = 0) => {
+    for (const item of results || []) {
+      const key = item.source + ':' + item.sourceId;
+      if (!merged.has(key) && typedScore(item.title) >= minimum) merged.set(key, { item, origin });
+    }
+  };
+  // What the user typed dominates; corrected spellings help only as a tie-breaker.
+  const score = item => 0.6 * typedScore(item.title) + 0.4 * Math.max(...queries.map(value => similarity(item.title, value)))
+    + (year && item.year === year.year ? 0.05 : 0);
+  const strong = () => [...merged.values()].some(entry => typedScore(entry.item.title) >= STRONG_MATCH);
+  const primary = await searchSource(typed, kind, settings, transport);
+  add(primary.results, 'typed');
+  let alternatives = [];
+  if (!strong()) {
+    const found = await corrections(base, kind, transport);
+    const seen = new Set([normalize(typed)]);
+    alternatives = [...(year ? [{ value: year.title, rank: 2 }] : []),
+      ...(found.suggestion ? [{ value: found.suggestion, rank: similarity(found.suggestion, base) + 0.05 }] : []),
+      ...found.titles.map(value => ({ value, rank: similarity(value, base) }))]
+      .sort((a, b) => b.rank - a.rank).map(entry => entry.value)
+      .filter(value => { const key = normalize(value); if (!key || seen.has(key)) return false; seen.add(key); return true; });
+    for (const alternative of alternatives.slice(0, 2)) {
+      const response = await optional(searchSource(alternative, kind, settings, transport));
+      if (!response?.results.length) continue;
+      queries.push(alternative);
+      add(response.results, 'corrected');
+      if (strong()) break;
+    }
+    if (!merged.size) {
+      // Phonetic misspellings ("incepshun") often still share a prefix with the real title.
+      const prefix = base.slice(0, Math.max(4, Math.ceil(base.length * 0.55))).trim();
+      if (prefix.length < base.length) add((await optional(searchSource(prefix, kind, settings, transport)))?.results, 'corrected', 0.5);
+    }
+  }
+  const ranked = [...merged.values()].map((entry, index) => ({ ...entry, index, score: score(entry.item) }))
+    .sort((a, b) => (Math.round(b.score * 50) - Math.round(a.score * 50)) || a.index - b.index).slice(0, 12);
+  const results = ranked.map(entry => entry.item);
+  const correctedQuery = ranked[0]?.origin === 'corrected' && typedScore(ranked[0].item.title) < 1 ? ranked[0].item.title : null;
+  const suggestions = strong() ? [] : alternatives.filter(value => typedScore(value) >= 0.75 && normalize(value) !== normalize(correctedQuery)
+    && !results.some(item => normalize(item.title) === normalize(value))).slice(0, 3);
+  const notice = results.length ? primary.notice.replace(/^No match found.*$/, 'Closest matches. Choose the correct title.')
+    : `No close match found. Check the spelling, try ${kind === 'tv' ? 'a movie' : 'a TV show'} search, or add it manually.`;
+  return { results, notice, correctedQuery, suggestions, confident: strong() };
 }
 function yearFromEntity(entity) {
   const value = claim(entity, 'P577')[0]?.time;
@@ -131,4 +253,4 @@ async function detail(source, id, kind, settings, transport = fetch) {
   }
   return result;
 }
-module.exports = { lookup, detail, request, MetadataError };
+module.exports = { lookup, detail, request, similarity, MetadataError };

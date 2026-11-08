@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { lookup, detail, MetadataError } = require('../metadata.cjs');
+const { lookup, detail, similarity, MetadataError } = require('../metadata.cjs');
 const transport = value => async () => ({ ok: true, json: async () => value });
 test('TVmaze metadata retains its rating source and separates network from availability', async () => {
   const show = { id: 10, name: 'Test Show', premiered: '2022-01-01', rating: { average: 8.5 }, genres: ['Drama'],
@@ -68,4 +68,54 @@ test('metadata errors are surfaced, optional enrichment reports partial failures
   });
   assert.match(item.metadataWarning, /Wikipedia enrichment unavailable/);
   assert.equal(item.title, 'Title');
+});
+test('similarity tolerates typos, transpositions, articles and punctuation', () => {
+  assert.equal(similarity('The Matrix', 'matrix'), 1);
+  assert.equal(similarity('Avengers: Endgame', 'avengers endgame'), 1);
+  assert.ok(similarity('Interstellar', 'intersteller') >= 0.88);
+  assert.ok(similarity('The Godfather', 'godfahter') >= 0.88);
+  assert.ok(similarity('Stranger Things', 'strnger things') >= 0.88);
+  assert.ok(similarity('Paddington', 'intersteller') < 0.5);
+});
+test('misspelled movie titles are corrected through spelling suggestions', async () => {
+  const requested = [];
+  const fake = async url => {
+    requested.push(url);
+    const params = new URL(url).searchParams;
+    if (url.includes('wbsearchentities')) return transport({ search: params.get('search') === 'interstellar'
+      ? [{ id: 'Q1', label: 'Interstellar', description: '2014 film directed by Christopher Nolan' }] : [] })();
+    if (url.includes('wbgetentities')) return transport({ entities: { Q1: { claims: {
+      P31: [{ mainsnak: { datavalue: { value: { id: 'Q11424' } } } }],
+      P577: [{ mainsnak: { datavalue: { value: { time: '+2014-11-07T00:00:00Z' } } } }] } } } })();
+    if (url.includes('en.wikipedia.org')) return transport({ query: { search: [],
+      searchinfo: params.get('srsearch') === 'intersteller film' ? { suggestion: 'interstellar film' } : {} } })();
+    throw new Error('unexpected ' + url);
+  };
+  const found = await lookup('  intersteller ', 'movie', {}, fake);
+  assert.equal(found.results[0].title, 'Interstellar');
+  assert.equal(found.results[0].year, 2014);
+  assert.equal(found.correctedQuery, 'Interstellar');
+  assert.deepEqual(found.suggestions, []);
+  assert.ok(requested.some(url => url.includes('search=intersteller')));
+});
+test('close matches skip correction requests and rank by similarity and typed year', async () => {
+  const requested = [];
+  const shows = [{ show: { id: 1, name: 'Godfather of Harlem' } }, { show: { id: 2, name: 'The Godfather' } }];
+  const typo = await lookup('godfathr', 'tv', {}, async url => { requested.push(url); return transport(shows)(); });
+  assert.deepEqual(typo.results.map(item => item.title), ['The Godfather', 'Godfather of Harlem']);
+  assert.equal(typo.correctedQuery, null);
+  assert.equal(typo.confident, true);
+  assert.equal(requested.length, 1);
+  const versions = [{ show: { id: 3, name: 'The Matrix', premiered: '2003-01-01' } }, { show: { id: 4, name: 'The Matrix', premiered: '1999-03-31' } }];
+  requested.length = 0;
+  const dated = await lookup('teh matrix 1999', 'tv', {}, async url => { requested.push(url); return transport(versions)(); });
+  assert.match(requested[0], /q=the%20matrix%201999/);
+  assert.deepEqual(dated.results.map(item => item.year), [1999, 2003]);
+});
+test('unavailable spelling help is not fatal and offers clear next steps', async () => {
+  const result = await lookup('zzqx unknown', 'tv', {}, async url => url.includes('tvmaze') ? transport([])() : { ok: false, status: 503 });
+  assert.deepEqual(result.results, []);
+  assert.deepEqual(result.suggestions, []);
+  assert.equal(result.confident, false);
+  assert.match(result.notice, /No close match found.*movie search/);
 });

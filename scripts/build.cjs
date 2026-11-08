@@ -56,7 +56,7 @@ async function build() {
   const compiler = candidates.find(value => value && fs.existsSync(value));
   if (!compiler) throw new Error('Executable built. Install Inno Setup or set ISCC_PATH to compile the setup wizard.');
   run(compiler, [path.join(root, 'installer', 'MoviesOfInterest.iss')]);
-  const setup = path.join(dist, 'MoviesOfInterest-Setup-1.0.0.exe');
+  const setup = path.join(dist, 'MoviesOfInterest-Setup-1.0.1.exe');
   const hash = crypto.createHash('sha256').update(fs.readFileSync(setup)).digest('hex');
   fs.writeFileSync(path.join(dist, 'SHA256SUMS.txt'), `${hash}  ${path.basename(setup)}\n`);
   console.log('Built installer and SHA256SUMS.txt in dist.');

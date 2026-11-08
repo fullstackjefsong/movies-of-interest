@@ -134,7 +134,7 @@ function createApp(options = {}) {
       if (route.startsWith('/api/') && !(route === '/api/health' && method === 'GET')) {
         if (req.headers['x-moi-token'] !== token) throw new ApiError(403, 'Reload the local application to authenticate.');
       }
-      if (method === 'GET' && route === '/api/health') return send(res, 200, { app: 'Movies of Interest', version: '1.0.0' });
+      if (method === 'GET' && route === '/api/health') return send(res, 200, { app: 'Movies of Interest', version: '1.0.1' });
       if (method === 'GET' && route === '/api/state') {
         return send(res, 200, { entries: entries(), settings: settings(), dataDir, installed: fs.existsSync(path.join(path.dirname(process.execPath), 'unins000.exe')) });
       }

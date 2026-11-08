@@ -196,6 +196,8 @@ document.addEventListener('click', event => {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     notify('Export downloaded.');
   });
+  if (button.dataset.suggest !== undefined) { $('#lookup-title').value = button.dataset.suggest; $('#lookup-form').requestSubmit(); }
+  if (button.hasAttribute('data-switch-kind')) { $('#lookup-kind').value = $('#lookup-kind').value === 'movie' ? 'tv' : 'movie'; $('#lookup-form').requestSubmit(); }
   if (button.dataset.pick) action(async () => {
     button.disabled = true;
     try {
@@ -228,10 +230,18 @@ $('#lookup-form').addEventListener('submit', event => {
     $('#lookup-results').innerHTML = '';
     $('#lookup-notice').textContent = 'Searching online metadata...';
     try {
-      const data = await (await api('search?q=' + encodeURIComponent($('#lookup-title').value) + '&kind=' + $('#lookup-kind').value)).json();
+      const typed = $('#lookup-title').value.trim();
+      const kind = $('#lookup-kind').value;
+      const data = await (await api('search?q=' + encodeURIComponent(typed) + '&kind=' + kind)).json();
       results = data.results;
       $('#lookup-notice').textContent = data.notice;
-      $('#lookup-results').innerHTML = results.map((item, index) => `<article class="lookup-result">${safeUrl(item.poster) ? `<img src="${safeUrl(item.poster)}" alt="" loading="lazy">` : '<img src="/logo.svg" alt="">'}<div><h3>${escape(item.title)} ${item.year ? '(' + item.year + ')' : ''}</h3><p>${escape(item.summary)}</p></div><button class="primary" data-pick="${index}">+ Add</button></article>`).join('') || '<p>No matching titles. Try another title or add manually.</p>';
+      const chips = (data.suggestions || []).map(value => `<button type="button" class="chip" data-suggest="${escape(value)}">${escape(value)}</button>`).join('');
+      const other = kind === 'movie' ? 'TV shows' : 'movies';
+      $('#lookup-results').innerHTML = (data.correctedQuery ? `<p class="did-you-mean">Showing closest matches for <strong>${escape(data.correctedQuery)}</strong>. You typed “${escape(typed)}”.</p>` : '')
+        + (chips ? `<p class="did-you-mean">${results.length ? 'Not it? Try' : 'Did you mean'} ${chips}</p>` : '')
+        + (results.map((item, index) => `<article class="lookup-result">${safeUrl(item.poster) ? `<img src="${safeUrl(item.poster)}" alt="" loading="lazy">` : '<img src="/logo.svg" alt="">'}<div><h3>${escape(item.title)} ${item.year ? '(' + item.year + ')' : ''}</h3><p>${escape(item.summary)}</p></div><button class="primary" data-pick="${index}">+ Add</button></article>`).join('')
+        || `<p class="did-you-mean">No close matches.</p>`)
+        + (data.confident ? '' : `<p class="did-you-mean">Looking for ${kind === 'movie' ? 'a TV show' : 'a movie'}? <button type="button" class="chip" data-switch-kind>Search ${other} instead</button></p>`);
     } catch (error) { $('#lookup-notice').textContent = error.message; throw error; }
     finally { button.disabled = false; }
   });

@@ -1,4 +1,4 @@
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 [Setup]
 AppId={{D49B2FC5-A2D7-476C-B633-E3B161E1044E}
 AppName=Movies of Interest
