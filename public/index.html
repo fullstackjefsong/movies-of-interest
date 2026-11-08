@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="moi-token" content="__TOKEN__">
+  <meta name="theme-color" content="#10141c">
+  <title>Movies of Interest</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+  <header class="topbar">
+    <a href="#library" class="identity"><img src="/logo.svg" alt="" width="46" height="46"><span>Movies of Interest<small>A SONG LABS PROJECT</small></span></a>
+    <nav aria-label="Main navigation">
+      <button class="nav active" data-tab="library">Library</button>
+      <button class="nav" data-tab="reports">Reports</button>
+      <button class="nav" data-tab="export">Export</button>
+      <button class="nav" data-tab="settings">Settings</button>
+    </nav>
+    <div class="local-badge"><span></span> LOCAL &amp; PRIVATE</div>
+  </header>
+  <main>
+    <section id="library" class="tab">
+      <div class="hero">
+        <div><p class="eyebrow">THE PERSONAL SCREENING ROOM</p><h1 id="banner">Movies of Interest</h1><p id="tagline" class="subtitle">Your next great watch starts here.</p></div>
+        <button id="add-open" class="primary">+ Add a title</button>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div class="toolbar">
+        <div class="segments" aria-label="Viewed filter">
+          <button data-filter="all" class="selected">All titles</button>
+          <button data-filter="unviewed">Unviewed</button>
+          <button data-filter="viewed">Viewed</button>
+        </div>
+        <label class="search-filter"><span class="sr-only">Search your library</span><input id="library-search" type="search" placeholder="Search your library..."></label>
+        <label><span class="sr-only">Media type</span><select id="kind-filter"><option value="all">Movies &amp; TV</option><option value="movie">Movies</option><option value="tv">TV shows</option></select></label>
+        <label><span class="sr-only">Genre</span><select id="genre-filter"><option value="">All genres</option></select></label>
+        <label><span class="sr-only">Sort</span><select id="sort"><option value="added">Added: first to last</option><option value="newest">Added: newest first</option><option value="title">Title: A to Z</option><option value="year">Release year: newest</option><option value="rating">Rating: highest</option><option value="runtime">Runtime: shortest</option><option value="viewedAt">Recently viewed</option><option value="director">Director: A to Z</option></select></label>
+      </div>
+      <div class="section-heading"><h2>Your collection</h2><span id="result-count"></span></div>
+      <div id="collection" class="collection"></div>
+    </section>
+    <section id="reports" class="tab" hidden>
+      <p class="eyebrow">THE BIG PICTURE</p><h1>Watchlist insights</h1><p class="subtitle">A little perspective on your personal universe of stories.</p>
+      <div id="report-content"></div>
+      <button id="print" class="secondary">Print / save as PDF</button>
+    </section>
+    <section id="export" class="tab" hidden>
+      <p class="eyebrow">YOUR COLLECTION, YOUR DATA</p><h1>Take your library with you</h1><p class="subtitle">No account. No lock-in. Export whenever you like.</p>
+      <div class="export-grid">
+        <article class="panel"><div class="file-icon">CSV</div><h2>Spreadsheet</h2><p>Titles, cast, genres, notes and watch status. Ready for Excel or another spreadsheet app.</p><button data-export="csv" class="primary">Download CSV</button></article>
+        <article class="panel"><div class="file-icon">{ }</div><h2>Complete JSON</h2><p>All entries, fetched metadata and appearance settings in a readable, portable format.</p><button data-export="json" class="primary">Download JSON</button></article>
+        <article class="panel"><div class="file-icon">DB</div><h2>SQLite backup</h2><p>A consistent snapshot of your database, even while the app is running. Restore instructions below.</p><button data-export="sqlite" class="primary">Download database</button></article>
+      </div>
+      <div class="panel"><h2>Safe backup &amp; restore</h2><p>Exports do not include your optional TMDB credential. Keep downloaded backups private: they contain your viewing history and notes.</p><p>To restore a SQLite backup: stop the app, keep a copy of your existing data folder, replace <code>library.db</code> with the backup, remove only <code>library.db-wal</code> and <code>library.db-shm</code> from that folder if present, then launch Movies of Interest from the Start menu.</p><p>Local data folder: <code class="data-path"></code></p></div>
+    </section>
+    <section id="settings" class="tab" hidden>
+      <p class="eyebrow">MAKE ROOM FOR YOUR STYLE</p><h1>Your screening room</h1><p class="subtitle">Personalize the space. The Movies of Interest identity stays in the navigation.</p>
+      <form id="settings-form">
+        <div class="settings-grid">
+          <div class="panel"><h2>Appearance</h2>
+            <label>Banner title<input name="banner" maxlength="120" required></label>
+            <label>Subtitle<input name="tagline" maxlength="120"></label>
+            <div class="two-columns"><label>Background color<input name="background" type="color"></label><label>Accent color<input name="accent" type="color"></label></div>
+            <label>Collection layout<select name="layout"><option value="grid">Poster grid</option><option value="list">Compact list</option></select></label>
+            <label>Background image<input id="background-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <p class="muted">PNG, JPEG or WebP, up to 5 MB. Kept in your local database.</p><button id="clear-background" type="button" class="secondary">Remove background image</button>
+          </div>
+          <div class="panel"><h2>Metadata &amp; streaming</h2>
+            <label>Streaming country (two-letter code)<input name="country" maxlength="2" pattern="[A-Za-z]{2}" required></label>
+            <p>Keyless mode uses Wikidata / Wikipedia for movies and TVmaze for TV. Some facts and images may be missing. Service search links do not verify availability, and some services may require searching again after sign-in.</p>
+            <label>Optional TMDB API read access token<input name="tmdbToken" type="password" autocomplete="off" placeholder="Leave blank to keep existing credential"></label>
+            <p id="credential-status" class="muted"></p>
+            <label class="checkbox"><input id="remove-token" type="checkbox"> Remove saved TMDB credential</label>
+            <p class="muted">A TMDB read access token enables richer new-title lookups, trailers and regional watch guides. Existing keyless entries keep their source; add a TMDB match to enrich one. Refresh TMDB entries after changing country.</p>
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">Get a free TMDB credential ↗</a>
+            <p class="muted">Credentials are stored locally, not encrypted. Never share the live database.</p>
+          </div>
+        </div>
+        <button type="submit" class="primary">Save preferences</button><button id="reset-appearance" type="button" class="secondary">Reset appearance</button>
+      </form>
+      <div class="panel danger-panel"><h2>Application controls</h2>
+        <p>The installed app starts at Windows sign-in and remains available while you are signed in. It cannot serve pages when your PC is off or asleep. Closing this browser tab does not stop the app.</p>
+        <p><strong>Stop server:</strong> disconnects this site now; your data stays intact. Restart from the Start menu, or at your next sign-in. This action is reversible.</p>
+        <button id="stop" class="danger">Stop server...</button>
+        <p><strong>Uninstall:</strong> opens the Windows uninstaller and removes the app and its sign-in startup. The uninstaller separately asks whether to permanently delete the local database. Deleted data cannot be recovered without a backup.</p>
+        <button id="uninstall" class="danger">Uninstall app...</button>
+        <p class="muted">Local data: <code class="data-path"></code></p>
+      </div>
+      <div class="panel"><h2>Credits &amp; privacy</h2><p>The library is stored on this PC. Searching sends the title to your selected metadata service. Remote posters and the attribution logo contact their image hosts when displayed. No telemetry or cloud account is used.</p>
+        <p><a href="https://www.wikidata.org/wiki/Wikidata:Licensing" target="_blank" rel="noopener noreferrer">Wikidata: CC0</a> · <a href="https://en.wikipedia.org/wiki/Wikipedia:Copyrights" target="_blank" rel="noopener noreferrer">Wikipedia: CC BY-SA; images have individual licenses</a> · <a href="https://www.tvmaze.com/api" target="_blank" rel="noopener noreferrer">TVmaze: CC BY-SA</a></p>
+        <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer"><img src="https://www.themoviedb.org/assets/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg" alt="The Movie Database (TMDB)" width="100" height="45" loading="lazy"></a>
+        <p>This product uses the TMDB API but is not endorsed or certified by TMDB. Optional availability data is provided by <a href="https://www.justwatch.com/" target="_blank" rel="noopener noreferrer">JustWatch</a> through TMDB. Ratings are source ratings, not IMDb ratings. YouTube Premium does not guarantee free access to a movie.</p>
+      </div>
+    </section>
+  </main>
+  <footer><div class="labs"><img src="/songlabslogo.png" alt="SONG Labs" width="42" height="42"><span>Crafted by <strong>SONG Labs</strong><small>Stories worth keeping. A space that's yours.</small></span></div><span>Movies of Interest · Local-first · v1.0</span></footer>
+  <dialog id="add-dialog">
+    <div class="dialog-heading"><div><p class="eyebrow">FIND YOUR NEXT WATCH</p><h2>Add to your collection</h2></div><button class="icon-button" data-close="add-dialog" aria-label="Close">×</button></div>
+    <form id="lookup-form" class="lookup-form"><label class="sr-only" for="lookup-title">Movie or TV title</label><input id="lookup-title" placeholder="Enter a movie or TV show title" maxlength="160" required><label class="sr-only" for="lookup-kind">Media type</label><select id="lookup-kind"><option value="movie">Movie</option><option value="tv">TV show</option></select><button class="primary">Search</button></form>
+    <p id="lookup-notice" class="muted">Enter a title, then choose the correct match. We fill in the available details.</p>
+    <div id="lookup-results"></div>
+    <button id="manual-add" class="secondary">Add title manually (no internet needed)</button>
+  </dialog>
+  <dialog id="detail-dialog"><div id="detail-content"></div></dialog>
+  <dialog id="confirm-dialog"><h2 id="confirm-heading"></h2><p id="confirm-message"></p><form id="confirm-form"><label id="confirm-label">Type the confirmation phrase<input id="confirm-input" autocomplete="off" required></label><div class="dialog-actions"><button type="button" class="secondary" data-close="confirm-dialog">Cancel</button><button class="danger">Confirm</button></div></form></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
