@@ -26,7 +26,7 @@ async function build() {
   if (!fs.existsSync(license)) throw new Error('Node runtime LICENSE file missing beside node.exe. Obtain the matching official runtime distribution.');
   fs.copyFileSync(license, path.join(dist, 'NODE-LICENSE.txt'));
   const metadata = fs.readFileSync(path.join(root, 'metadata.cjs'), 'utf8');
-  const app = fs.readFileSync(path.join(root, 'app.cjs'), 'utf8').replace("require('./metadata.cjs')", `(() => { const module = { exports: {} };\n${metadata}\nreturn module.exports; })()`);
+  const app = fs.readFileSync(path.join(root, 'app.cjs'), 'utf8').replace("require('./metadata.cjs')", () => `(() => { const module = { exports: {} };\n${metadata}\nreturn module.exports; })()`);
   const bundle = path.join(dist, 'bundle.cjs');
   fs.writeFileSync(bundle, app);
   const assets = {};
