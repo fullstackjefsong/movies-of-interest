@@ -18,8 +18,7 @@ async function setup(t, extra = {}) {
   const token = /name="moi-token" content="([^"]+)"/.exec(html)[1];
   t.after(async () => {
     if (app.server.listening) await new Promise(resolve => { app.server.once('close', resolve); app.close(); });
-    for (const name of fs.readdirSync(dataDir)) fs.unlinkSync(path.join(dataDir, name));
-    fs.rmdirSync(dataDir);
+    fs.rmSync(dataDir, { recursive: true, force: true });
   });
   return { app, origin, dataDir, token, request: (route, method = 'GET', data, headers = {}) =>
     fetch(origin + '/api/' + route, { method, headers: { 'X-MOI-Token': token, ...headers, ...(data ? { 'Content-Type': 'application/json' } : {}) }, body: data ? JSON.stringify(data) : undefined }) };
@@ -127,4 +126,103 @@ test('metadata failures are explicit and do not create or overwrite entries', as
   assert.equal(response.status, 502);
   assert.equal((await response.json()).error, 'Service offline.');
   assert.equal((await (await request('state')).json()).entries.length, 0);
+});
+
+test('appearance options validate, persist, and reset to served defaults', async t => {
+  const { request } = await setup(t);
+  const custom = { layout: 'details', theme: 'light', font: 'classic', cardSize: 'large', corners: 'square',
+    backgroundOpacity: 40, backgroundBlur: 6, songLabsLogo: 'mono', showStats: false };
+  assert.equal((await request('settings', 'PUT', custom)).status, 200);
+  let state = await (await request('state')).json();
+  for (const [key, value] of Object.entries(custom)) assert.equal(state.settings[key], value);
+  assert.equal(state.version, require('../package.json').version);
+  for (const bad of [{ layout: 'table' }, { songLabsLogo: 'invisible' }, { backgroundOpacity: 101 }, { backgroundBlur: 2.5 },
+    { backgroundOpacity: '40' }, { showStats: 'no' }, { theme: 'neon' }]) {
+    assert.equal((await request('settings', 'PUT', bad)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await request('settings', 'PUT', state.defaults)).status, 200);
+  state = await (await request('state')).json();
+  assert.equal(state.settings.layout, 'grid');
+  assert.equal(state.settings.songLabsLogo, 'color');
+  assert.equal(state.settings.showStats, true);
+});
+function legacyLibrary(dataDir) {
+  // Schema and data exactly as written by v1.0.x, which had no migrations or meta table.
+  const db = new DatabaseSync(path.join(dataDir, 'library.db'));
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, source_id TEXT NOT NULL,
+      title TEXT NOT NULL, kind TEXT NOT NULL, year INTEGER, rating REAL, metadata TEXT NOT NULL, added_at TEXT NOT NULL,
+      viewed INTEGER NOT NULL DEFAULT 0, viewed_at TEXT, notes TEXT NOT NULL DEFAULT '', UNIQUE(source, source_id));
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  const metadata = JSON.stringify({ ...fixture, title: undefined });
+  const insert = db.prepare('INSERT INTO entries(source,source_id,title,kind,year,rating,metadata,added_at,viewed,viewed_at,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+  insert.run('wikidata', 'Q1', 'Kept film', 'movie', 2020, 7.5, metadata, '2026-01-01T00:00:00Z', 1, '2026-02-01T00:00:00Z', 'My note');
+  insert.run('manual', 'm-2', 'Second film', 'movie', null, null, metadata, '2026-01-02T00:00:00Z', 0, null, '');
+  for (const [key, value] of [['banner', 'Old banner'], ['layout', 'list'], ['accent', '#123456'], ['tmdbToken', 'kept-secret'], ['retired', 'x']]) {
+    db.prepare('INSERT INTO settings(key,value) VALUES(?,?)').run(key, JSON.stringify(value));
+  }
+  db.close();
+}
+test('upgrading a v1.0 library keeps every entry and preference and saves a backup first', async t => {
+  const { createApp: create, VERSION, MIGRATIONS } = require('../app.cjs');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moi-upgrade-'));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  legacyLibrary(dataDir);
+  const start = async () => {
+    const app = create({ dataDir });
+    const origin = await app.listen(0);
+    const token = /name="moi-token" content="([^"]+)"/.exec(await (await fetch(origin)).text())[1];
+    const state = await (await fetch(origin + '/api/state', { headers: { 'X-MOI-Token': token } })).json();
+    await new Promise(resolve => { app.server.once('close', resolve); app.close(); });
+    return state;
+  };
+  const state = await start();
+  assert.deepEqual(state.entries.map(item => [item.title, item.viewed, item.notes]), [['Kept film', true, 'My note'], ['Second film', false, '']]);
+  assert.equal(state.entries[0].viewedAt, '2026-02-01T00:00:00Z');
+  assert.equal(state.settings.banner, 'Old banner');
+  assert.equal(state.settings.layout, 'list');
+  assert.equal(state.settings.accent, '#123456');
+  assert.equal(state.settings.hasTmdbToken, true);
+  assert.equal(state.settings.songLabsLogo, 'color');
+  assert.equal(state.settings.retired, undefined);
+  const backups = fs.readdirSync(path.join(dataDir, 'backups'));
+  assert.equal(backups.length, 1);
+  assert.match(backups[0], new RegExp(`^library-v1\\.0-before-v${VERSION.replaceAll('.', '\\.')}-.*\\.db$`));
+  const copy = new DatabaseSync(path.join(dataDir, 'backups', backups[0]));
+  assert.equal(copy.prepare('SELECT COUNT(*) AS count FROM entries').get().count, 2);
+  copy.close();
+  const db = new DatabaseSync(path.join(dataDir, 'library.db'));
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key='appVersion'").get().value, VERSION);
+  db.close();
+  await start();
+  assert.equal(fs.readdirSync(path.join(dataDir, 'backups')).length, 1, 'restarting the same version must not create backups');
+});
+test('fresh installs skip backups; newer libraries are refused untouched; backups are pruned', async t => {
+  const { createApp: create, MIGRATIONS } = require('../app.cjs');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'moi-fresh-'));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const openAndClose = () => new Promise(resolve => create({ dataDir, onClose: resolve }).close());
+  await openAndClose();
+  assert.equal(fs.existsSync(path.join(dataDir, 'backups')), false);
+  const db = new DatabaseSync(path.join(dataDir, 'library.db'));
+  db.exec(`PRAGMA user_version=${MIGRATIONS.length + 1}`);
+  db.close();
+  assert.throws(() => create({ dataDir }), /newer version/);
+  const check = new DatabaseSync(path.join(dataDir, 'library.db'));
+  assert.equal(check.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length + 1);
+  check.exec(`PRAGMA user_version=${MIGRATIONS.length}; UPDATE meta SET value='0.9' WHERE key='appVersion'`);
+  check.close();
+  const folder = path.join(dataDir, 'backups');
+  fs.mkdirSync(folder);
+  for (let i = 0; i < 6; i++) {
+    const file = path.join(folder, `library-old-${i}.db`);
+    fs.writeFileSync(file, '');
+    fs.utimesSync(file, new Date(2020, 0, i + 1), new Date(2020, 0, i + 1));
+  }
+  await openAndClose();
+  const kept = fs.readdirSync(folder);
+  assert.equal(kept.length, 5);
+  assert.ok(kept.some(name => name.startsWith('library-v0.9-before-')));
+  assert.ok(!kept.includes('library-old-0.db') && !kept.includes('library-old-1.db'));
 });

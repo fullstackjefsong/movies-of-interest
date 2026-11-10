@@ -1,6 +1,6 @@
 {
   "name": "movies-of-interest",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "A private, local-first movie and television watchlist by SONG Labs.",
   "license": "MIT",

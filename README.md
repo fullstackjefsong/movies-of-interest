@@ -5,8 +5,8 @@ a browser interface, and a Windows installer with a bundled Node runtime.
 
 ## Install (Windows 10/11, x64)
 
-**[Download the installer](https://github.com/fullstackjefsong/movies-of-interest/releases/latest/download/MoviesOfInterest-Setup-1.0.1.exe)**
-(`MoviesOfInterest-Setup-1.0.1.exe`, from the
+**[Download the installer](https://github.com/fullstackjefsong/movies-of-interest/releases/latest/download/MoviesOfInterest-Setup-1.1.0.exe)**
+(`MoviesOfInterest-Setup-1.1.0.exe`, from the
 [latest release](https://github.com/fullstackjefsong/movies-of-interest/releases/latest)).
 **Do not download Source code or "Download ZIP"** to install the app. Run the setup wizard; no Node, Python, database tools or scripting are
 needed. Installation is per-user and does not require administrator privileges.
@@ -43,8 +43,28 @@ from the same release. A checksum alone does not establish publisher trust.
   collection growth, recent viewing and source ratings. Print to PDF.
 - Export CSV, complete JSON, or a consistent SQLite snapshot. Credentials
   are excluded from every export.
-- Customize the banner, subtitle, colors, layout and background image.
-  The navigation retains the Movies of Interest identity.
+- Customize the banner and subtitle, theme presets, light or dark mode,
+  background and accent colors, font, corner style, poster size, summary
+  counters, and a background image with adjustable strength and blur. The
+  SONG Labs footer logo can be full color, monochrome or hidden. Changes
+  preview instantly before you save. The navigation retains the Movies of
+  Interest identity.
+- Switch the library between **poster grid**, **card list** and **detailed
+  list** from the toolbar. The detailed list shows small thumbnails with year,
+  type, rating, runtime, genres, director, leads, date added and viewed
+  status; click a column heading to sort.
+
+## Updating
+
+Download and run the newer installer; there is no need to uninstall first.
+Setup recognizes the existing installation, says which version it is updating
+from, briefly stops the running app, replaces the program files and starts it
+again. Your library, viewed status, notes and preferences live in
+`%LOCALAPPDATA%\MoviesOfInterest`, separate from the program, and are kept.
+The first time a new version starts, it saves a safety copy of the library in
+`%LOCALAPPDATA%\MoviesOfInterest\backups` before applying any database
+updates (the five most recent copies are kept). Setup warns before installing
+an older version over a newer one.
 
 ## Metadata: honest limits
 
@@ -126,12 +146,14 @@ and port for tests. The executable accepts `--open` and `--stop`.
 
 ## Public GitHub distribution
 
-Pushing a tag such as `v1.0.1` runs the **Windows installer** workflow, which
+Pushing a tag such as `v1.1.0` runs the **Windows installer** workflow, which
 tests, builds and smoke-tests the app, then publishes a GitHub Release with the
 installer and `SHA256SUMS.txt`. The workflow can also be run manually to
-download a build artifact without releasing. Version values in the package,
-app, installer, workflow and the README download link must be updated together
-for each release. Consider signing both app and installer before broad release.
+download a build artifact without releasing. The version comes from
+`package.json` (`npm version <x.y.z> --no-git-tag-version`); the build passes
+it to the app and installer. Update the README download link to match.
+Database changes must be appended to `MIGRATIONS` in `app.cjs`; never edit a
+released step. Consider signing both app and installer before broad release.
 
 ## Attribution and licensing
 

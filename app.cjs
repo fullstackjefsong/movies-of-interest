@@ -10,11 +10,30 @@ const { DatabaseSync } = require('node:sqlite');
 const sea = require('node:sea');
 const { lookup, detail } = require('./metadata.cjs');
 
-const DEFAULTS = {
+const VERSION = require('./package.json').version;
+const APPEARANCE = {
   banner: 'Movies of Interest', tagline: 'Your next great watch starts here.',
   background: '#10141c', accent: '#e8c782', backgroundImage: '',
-  country: 'US', tmdbToken: '', layout: 'grid',
+  layout: 'grid', theme: 'dark', font: 'modern', cardSize: 'medium', corners: 'rounded',
+  backgroundOpacity: 15, backgroundBlur: 0, songLabsLogo: 'color', showStats: true,
 };
+const DEFAULTS = { ...APPEARANCE, country: 'US', tmdbToken: '' };
+const CHOICES = {
+  layout: ['grid', 'list', 'details'], theme: ['dark', 'light'], font: ['modern', 'classic', 'condensed', 'typewriter'],
+  cardSize: ['small', 'medium', 'large'], corners: ['rounded', 'soft', 'square'], songLabsLogo: ['color', 'mono', 'hidden'],
+};
+const RANGES = { backgroundOpacity: [0, 100], backgroundBlur: [0, 20] };
+// Each entry upgrades the schema by one PRAGMA user_version step; never edit released steps, only append.
+const MIGRATIONS = [
+  db => db.exec(`CREATE TABLE IF NOT EXISTS entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, source_id TEXT NOT NULL,
+      title TEXT NOT NULL, kind TEXT NOT NULL, year INTEGER, rating REAL,
+      metadata TEXT NOT NULL, added_at TEXT NOT NULL, viewed INTEGER NOT NULL DEFAULT 0,
+      viewed_at TEXT, notes TEXT NOT NULL DEFAULT '', UNIQUE(source, source_id));
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`),
+  db => db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);'),
+];
+const KEEP_BACKUPS = 5;
 const SERVICES = [
   ['Netflix', 'https://www.netflix.com/search?q='],
   ['Hulu', 'https://www.hulu.com/search?q='],
@@ -62,6 +81,33 @@ async function body(req) {
     return data;
   } catch { throw new ApiError(400, 'Request must be a JSON object.'); }
 }
+function validSetting(key, value) {
+  if (['banner', 'tagline'].includes(key)) return text(value, key, 120, key === 'banner');
+  if (['background', 'accent'].includes(key)) {
+    if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) throw new ApiError(400, 'Invalid color.');
+    return value;
+  }
+  if (key === 'country') {
+    if (typeof value !== 'string' || !/^[A-Z]{2}$/.test(value)) throw new ApiError(400, 'Country must be a two-letter uppercase code.');
+    return value;
+  }
+  if (Object.hasOwn(CHOICES, key)) {
+    if (!CHOICES[key].includes(value)) throw new ApiError(400, `Invalid ${key}.`);
+    return value;
+  }
+  if (Object.hasOwn(RANGES, key)) {
+    const [min, max] = RANGES[key];
+    if (!Number.isInteger(value) || value < min || value > max) throw new ApiError(400, `${key} must be a whole number from ${min} to ${max}.`);
+    return value;
+  }
+  if (key === 'showStats') {
+    if (typeof value !== 'boolean') throw new ApiError(400, 'Invalid showStats.');
+    return value;
+  }
+  if (key === 'backgroundImage') return validateImage(value);
+  if (key === 'tmdbToken') return text(value, 'TMDB credential', 1000);
+  throw new ApiError(400, 'Unknown setting.');
+}
 function validateImage(value) {
   if (value === '') return value;
   if (typeof value !== 'string') throw new ApiError(400, 'Invalid background image.');
@@ -74,25 +120,58 @@ function validateImage(value) {
   if (!valid || bytes.length > 5 * 1024 * 1024) throw new ApiError(400, 'Image content does not match its format or exceeds 5 MB.');
   return value;
 }
+function openLibrary(dbPath) {
+  const existed = fs.existsSync(dbPath) && fs.statSync(dbPath).size > 0;
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
+    const schema = db.prepare('PRAGMA user_version').get().user_version;
+    if (schema > MIGRATIONS.length) {
+      throw new Error(`This library was saved by a newer version of Movies of Interest (schema ${schema}). Install the latest release; your data is unchanged.`);
+    }
+    const hasMeta = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").get();
+    const hasEntries = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries'").get();
+    const previous = hasMeta ? db.prepare("SELECT value FROM meta WHERE key='appVersion'").get()?.value : (hasEntries ? '1.0' : undefined);
+    if (existed && hasEntries && (previous !== VERSION || schema < MIGRATIONS.length)) backupLibrary(db, dbPath, previous || 'unknown');
+    for (let step = schema; step < MIGRATIONS.length; step++) {
+      db.exec('BEGIN');
+      try {
+        MIGRATIONS[step](db);
+        db.exec(`PRAGMA user_version=${step + 1}`);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
+    db.prepare("INSERT INTO meta(key,value) VALUES('appVersion',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(VERSION);
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
+function backupLibrary(db, dbPath, previous) {
+  const folder = path.join(path.dirname(dbPath), 'backups');
+  fs.mkdirSync(folder, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const label = String(previous).replace(/[^0-9A-Za-z.-]/g, '');
+  db.prepare('VACUUM INTO ?').run(path.join(folder, `library-v${label}-before-v${VERSION}-${stamp}.db`));
+  const old = fs.readdirSync(folder).filter(name => /^library-.*\.db$/.test(name))
+    .map(name => ({ name, time: fs.statSync(path.join(folder, name)).mtimeMs })).sort((a, b) => b.time - a.time);
+  for (const item of old.slice(KEEP_BACKUPS)) fs.unlinkSync(path.join(folder, item.name));
+}
+function defaultDataDir() {
+  return process.env.MOI_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'MoviesOfInterest');
+}
 function createApp(options = {}) {
-  const dataDir = options.dataDir || process.env.MOI_DATA_DIR
-    || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'MoviesOfInterest');
+  const dataDir = options.dataDir || defaultDataDir();
   fs.mkdirSync(dataDir, { recursive: true });
   const dbPath = path.join(dataDir, 'library.db');
-  const db = new DatabaseSync(dbPath);
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-    CREATE TABLE IF NOT EXISTS entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, source_id TEXT NOT NULL,
-      title TEXT NOT NULL, kind TEXT NOT NULL, year INTEGER, rating REAL,
-      metadata TEXT NOT NULL, added_at TEXT NOT NULL, viewed INTEGER NOT NULL DEFAULT 0,
-      viewed_at TEXT, notes TEXT NOT NULL DEFAULT '', UNIQUE(source, source_id));
-    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  const db = openLibrary(dbPath);
   const token = crypto.randomBytes(32).toString('hex');
   let closing = false;
   let origin = '';
   function settings(includeSecret = false) {
     const result = { ...DEFAULTS };
-    for (const row of db.prepare('SELECT key,value FROM settings').all()) result[row.key] = JSON.parse(row.value);
+    for (const row of db.prepare('SELECT key,value FROM settings').all()) {
+      if (!Object.hasOwn(DEFAULTS, row.key)) continue;
+      try { result[row.key] = validSetting(row.key, JSON.parse(row.value)); } catch { /* keep default for unusable stored values */ }
+    }
     result.hasTmdbToken = Boolean(result.tmdbToken);
     if (!includeSecret) delete result.tmdbToken;
     return result;
@@ -134,9 +213,9 @@ function createApp(options = {}) {
       if (route.startsWith('/api/') && !(route === '/api/health' && method === 'GET')) {
         if (req.headers['x-moi-token'] !== token) throw new ApiError(403, 'Reload the local application to authenticate.');
       }
-      if (method === 'GET' && route === '/api/health') return send(res, 200, { app: 'Movies of Interest', version: '1.0.1' });
+      if (method === 'GET' && route === '/api/health') return send(res, 200, { app: 'Movies of Interest', version: VERSION });
       if (method === 'GET' && route === '/api/state') {
-        return send(res, 200, { entries: entries(), settings: settings(), dataDir, installed: fs.existsSync(path.join(path.dirname(process.execPath), 'unins000.exe')) });
+        return send(res, 200, { entries: entries(), settings: settings(), defaults: APPEARANCE, choices: CHOICES, version: VERSION, dataDir, installed: fs.existsSync(path.join(path.dirname(process.execPath), 'unins000.exe')) });
       }
       if (method === 'GET' && route === '/api/search') {
         const query = text(url.searchParams.get('q'), 'title', 160, true);
@@ -196,18 +275,7 @@ function createApp(options = {}) {
         const update = {};
         for (const [key, value] of Object.entries(input)) {
           if (!Object.hasOwn(DEFAULTS, key)) throw new ApiError(400, 'Unknown setting.');
-          if (['banner', 'tagline'].includes(key)) update[key] = text(value, key, 120, key === 'banner');
-          else if (['background', 'accent'].includes(key)) {
-            if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) throw new ApiError(400, 'Invalid color.');
-            update[key] = value;
-          } else if (key === 'country') {
-            if (typeof value !== 'string' || !/^[A-Z]{2}$/.test(value)) throw new ApiError(400, 'Country must be a two-letter uppercase code.');
-            update[key] = value;
-          } else if (key === 'layout') {
-            if (!['grid', 'list'].includes(value)) throw new ApiError(400, 'Invalid layout.');
-            update[key] = value;
-          } else if (key === 'backgroundImage') update[key] = validateImage(value);
-          else if (key === 'tmdbToken') update[key] = text(value, 'TMDB credential', 1000);
+          update[key] = validSetting(key, value);
         }
         db.exec('BEGIN');
         try {
@@ -310,10 +378,17 @@ async function main() {
     }
     return;
   }
-  const app = createApp();
   if (sea.isSea()) {
-    const log = fs.createWriteStream(path.join(path.dirname(app.dbPath), 'app.log'), { flags: 'a' });
+    const dir = defaultDataDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const log = fs.createWriteStream(path.join(dir, 'app.log'), { flags: 'a' });
     console.error = (...values) => log.write(`${new Date().toISOString()} ${values.join(' ')}\n`);
+  }
+  let app;
+  try { app = createApp(); } catch (error) {
+    console.error(`Cannot open the library: ${error.message}`);
+    process.exitCode = 1;
+    return;
   }
   try {
     const url = await app.listen(Number(process.env.MOI_PORT || 38473));
@@ -338,4 +413,4 @@ async function main() {
   }
 }
 if (sea.isSea() || require.main === module) main();
-module.exports = { createApp, DEFAULTS, validateImage };
+module.exports = { createApp, DEFAULTS, APPEARANCE, VERSION, MIGRATIONS, validateImage };

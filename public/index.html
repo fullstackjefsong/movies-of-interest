@@ -39,6 +39,11 @@
         <label><span class="sr-only">Media type</span><select id="kind-filter"><option value="all">Movies &amp; TV</option><option value="movie">Movies</option><option value="tv">TV shows</option></select></label>
         <label><span class="sr-only">Genre</span><select id="genre-filter"><option value="">All genres</option></select></label>
         <label><span class="sr-only">Sort</span><select id="sort"><option value="added">Added: first to last</option><option value="newest">Added: newest first</option><option value="title">Title: A to Z</option><option value="year">Release year: newest</option><option value="rating">Rating: highest</option><option value="runtime">Runtime: shortest</option><option value="viewedAt">Recently viewed</option><option value="director">Director: A to Z</option></select></label>
+        <div class="segments view-switch" role="group" aria-label="Collection view">
+          <button data-view="grid" title="Poster grid" aria-label="Poster grid"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg></button>
+          <button data-view="list" title="Card list" aria-label="Card list"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="4" height="6" rx="1"/><rect x="7" y="2" width="8" height="1.6" rx=".8"/><rect x="7" y="4.6" width="5" height="1.4" rx=".7"/><rect x="1" y="9" width="4" height="6" rx="1"/><rect x="7" y="10" width="8" height="1.6" rx=".8"/><rect x="7" y="12.6" width="5" height="1.4" rx=".7"/></svg></button>
+          <button data-view="details" title="Detailed list" aria-label="Detailed list"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1.5" width="2.4" height="3" rx=".5"/><rect x="5" y="2.3" width="10" height="1.4" rx=".7"/><rect x="1" y="6.5" width="2.4" height="3" rx=".5"/><rect x="5" y="7.3" width="10" height="1.4" rx=".7"/><rect x="1" y="11.5" width="2.4" height="3" rx=".5"/><rect x="5" y="12.3" width="10" height="1.4" rx=".7"/></svg></button>
+        </div>
       </div>
       <div class="section-heading"><h2>Your collection</h2><span id="result-count"></span></div>
       <div id="collection" class="collection"></div>
@@ -55,19 +60,37 @@
         <article class="panel"><div class="file-icon">{ }</div><h2>Complete JSON</h2><p>All entries, fetched metadata and appearance settings in a readable, portable format.</p><button data-export="json" class="primary">Download JSON</button></article>
         <article class="panel"><div class="file-icon">DB</div><h2>SQLite backup</h2><p>A consistent snapshot of your database, even while the app is running. Restore instructions below.</p><button data-export="sqlite" class="primary">Download database</button></article>
       </div>
-      <div class="panel"><h2>Safe backup &amp; restore</h2><p>Exports do not include your optional TMDB credential. Keep downloaded backups private: they contain your viewing history and notes.</p><p>To restore a SQLite backup: stop the app, keep a copy of your existing data folder, replace <code>library.db</code> with the backup, remove only <code>library.db-wal</code> and <code>library.db-shm</code> from that folder if present, then launch Movies of Interest from the Start menu.</p><p>Local data folder: <code class="data-path"></code></p></div>
+      <div class="panel"><h2>Safe backup &amp; restore</h2><p>Exports do not include your optional TMDB credential. Keep downloaded backups private: they contain your viewing history and notes.</p><p>To restore a SQLite backup: stop the app, keep a copy of your existing data folder, replace <code>library.db</code> with the backup, remove only <code>library.db-wal</code> and <code>library.db-shm</code> from that folder if present, then launch Movies of Interest from the Start menu.</p><p>Updates keep your library. Each time a new version first starts, it saves a safety copy in the <code>backups</code> subfolder of the data folder (the five most recent are kept); restore one the same way.</p><p>Local data folder: <code class="data-path"></code></p></div>
     </section>
     <section id="settings" class="tab" hidden>
-      <p class="eyebrow">MAKE ROOM FOR YOUR STYLE</p><h1>Your screening room</h1><p class="subtitle">Personalize the space. The Movies of Interest identity stays in the navigation.</p>
+      <p class="eyebrow">MAKE ROOM FOR YOUR STYLE</p><h1>Your screening room</h1><p class="subtitle">Personalize the space. Changes preview instantly; save to keep them. The Movies of Interest identity stays in the navigation.</p>
       <form id="settings-form">
+        <div class="panel"><h2>Theme presets</h2><p class="muted">Start from a preset, then fine-tune anything below.</p><div id="presets" class="presets"></div></div>
         <div class="settings-grid">
-          <div class="panel"><h2>Appearance</h2>
+          <div class="panel"><h2>Colors &amp; type</h2>
+            <label>Mode<select name="theme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+            <div class="two-columns"><label>Background color<input name="background" type="color"></label><label>Accent color<input name="accent" type="color"></label></div>
+            <label>Font<select name="font"><option value="modern">Modern sans</option><option value="classic">Classic serif</option><option value="condensed">Marquee condensed</option><option value="typewriter">Screenplay typewriter</option></select></label>
+            <label>Corners<select name="corners"><option value="rounded">Rounded</option><option value="soft">Soft</option><option value="square">Square</option></select></label>
+          </div>
+          <div class="panel"><h2>Banner &amp; library</h2>
             <label>Banner title<input name="banner" maxlength="120" required></label>
             <label>Subtitle<input name="tagline" maxlength="120"></label>
-            <div class="two-columns"><label>Background color<input name="background" type="color"></label><label>Accent color<input name="accent" type="color"></label></div>
-            <label>Collection layout<select name="layout"><option value="grid">Poster grid</option><option value="list">Compact list</option></select></label>
-            <label>Background image<input id="background-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>
-            <p class="muted">PNG, JPEG or WebP, up to 5 MB. Kept in your local database.</p><button id="clear-background" type="button" class="secondary">Remove background image</button>
+            <label>Collection view<select name="layout"><option value="grid">Poster grid</option><option value="list">Card list</option><option value="details">Detailed list (small thumbnails)</option></select></label>
+            <label>Poster size (grid view)<select name="cardSize"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
+            <label class="checkbox"><input name="showStats" type="checkbox"> Show the summary counters above the library</label>
+          </div>
+          <div class="panel"><h2>Background image</h2>
+            <label>Upload an image<input id="background-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <p class="muted">PNG, JPEG or WebP, up to 5 MB. Kept in your local database.</p>
+            <label>Image strength <output id="opacity-value"></output><input name="backgroundOpacity" type="range" min="0" max="100" step="1"></label>
+            <label>Image blur <output id="blur-value"></output><input name="backgroundBlur" type="range" min="0" max="20" step="1"></label>
+            <button id="clear-background" type="button" class="secondary">Remove background image</button>
+          </div>
+          <div class="panel"><h2>SONG Labs branding</h2>
+            <div class="labs-preview"><img src="/songlabslogo.png" alt="SONG Labs logo preview" width="56" height="56"></div>
+            <label>SONG Labs logo<select name="songLabsLogo"><option value="color">Full color</option><option value="mono">Monochrome</option><option value="hidden">Hidden</option></select></label>
+            <p class="muted">Applies to the logo in the page footer. Monochrome blends with any theme.</p>
           </div>
           <div class="panel"><h2>Metadata &amp; streaming</h2>
             <label>Streaming country (two-letter code)<input name="country" maxlength="2" pattern="[A-Za-z]{2}" required></label>
@@ -97,7 +120,7 @@
       </div>
     </section>
   </main>
-  <footer><div class="labs"><img src="/songlabslogo.png" alt="SONG Labs" width="42" height="42"><span>Crafted by <strong>SONG Labs</strong><small>Stories worth keeping. A space that's yours.</small></span></div><span>Movies of Interest · Local-first · v1.0.1</span></footer>
+  <footer><div class="labs"><img src="/songlabslogo.png" alt="SONG Labs" width="42" height="42"><span>Crafted by <strong>SONG Labs</strong><small>Stories worth keeping. A space that's yours.</small></span></div><span>Movies of Interest · Local-first · <span id="app-version"></span></span></footer>
   <dialog id="add-dialog">
     <div class="dialog-heading"><div><p class="eyebrow">FIND YOUR NEXT WATCH</p><h2>Add to your collection</h2></div><button class="icon-button" data-close="add-dialog" aria-label="Close">×</button></div>
     <form id="lookup-form" class="lookup-form"><label class="sr-only" for="lookup-title">Movie or TV title</label><input id="lookup-title" placeholder="Enter a movie or TV show title" maxlength="160" required><label class="sr-only" for="lookup-kind">Media type</label><select id="lookup-kind"><option value="movie">Movie</option><option value="tv">TV show</option></select><button class="primary">Search</button></form>

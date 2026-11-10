@@ -1,8 +1,12 @@
-#define AppVersion "1.0.1"
+#ifndef AppVersion
+  #define AppVersion "0.0.0"
+#endif
+#define AppKey "{D49B2FC5-A2D7-476C-B633-E3B161E1044E}"
 [Setup]
-AppId={{D49B2FC5-A2D7-476C-B633-E3B161E1044E}
+AppId={{#AppKey}
 AppName=Movies of Interest
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=SONG Labs
 DefaultDirName={localappdata}\Programs\MoviesOfInterest
 DefaultGroupName=Movies of Interest
@@ -40,6 +44,48 @@ Name: "{userstartup}\Movies of Interest"; Filename: "{sys}\wscript.exe"; Paramet
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"" --open"; Flags: nowait runasoriginaluser; Description: "Open Movies of Interest in your browser"
 
 [Code]
+var
+  PreviousVersion: String;
+  UpdatePage: TOutputMsgWizardPage;
+
+function IsUpdate(): Boolean;
+begin
+  Result := PreviousVersion <> '';
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Installed, Current: Int64;
+begin
+  Result := True;
+  if not RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppKey}_is1', 'DisplayVersion', PreviousVersion) then
+    PreviousVersion := '';
+  Log('Existing installation version: "' + PreviousVersion + '"; installing {#AppVersion}');
+  if IsUpdate() and StrToVersion(PreviousVersion, Installed) and StrToVersion('{#AppVersion}', Current)
+    and (ComparePackedVersion(Installed, Current) > 0) then
+    Result := SuppressibleMsgBox('A newer version (' + PreviousVersion + ') of Movies of Interest is already installed.' + #13#10 +
+      'Version {#AppVersion} may not be able to open a library saved by the newer version.' + #13#10#13#10 +
+      'Install the older version anyway?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES;
+end;
+
+procedure InitializeWizard();
+begin
+  if IsUpdate() then
+    UpdatePage := CreateOutputMsgPage(wpWelcome, 'Update Movies of Interest',
+      'Version ' + PreviousVersion + ' is installed. Setup will update it to version {#AppVersion}.',
+      'Your movie library, viewed status, notes and preferences are kept. They are stored separately from the program in:' + #13#10 +
+      ExpandConstant('{localappdata}\MoviesOfInterest') + #13#10#13#10 +
+      'Setup briefly stops the running app, replaces the program files and starts it again. ' +
+      'The first time the new version starts, it saves a safety copy of your library in the "backups" subfolder before applying any updates.');
+end;
+
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := MemoDirInfo;
+  if IsUpdate() then
+    Result := 'Update from version ' + PreviousVersion + ' to {#AppVersion}' + NewLine + 'Your library and preferences are kept.' + NewLine + NewLine + Result;
+end;
+
 function StopApplication(const Directory: String): Boolean;
 var
   ResultCode: Integer;
@@ -73,7 +119,7 @@ begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent then begin
     DataPath := ExpandConstant('{localappdata}\MoviesOfInterest');
     if FileExists(DataPath + '\library.db') then begin
-      if MsgBox('Permanently DELETE your local movie database, preferences and notes?' + #13#10 +
+      if MsgBox('Permanently DELETE your local movie database, its automatic backups, preferences and notes?' + #13#10 +
         'This is IRREVERSIBLE without an exported backup.' + #13#10 +
         'Choose No to keep your library for a future reinstall.' + #13#10 + DataPath,
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then begin
@@ -84,6 +130,7 @@ begin
           if not DeleteFile(DataPath + '\library.db') then
             MsgBox('Could not delete the database. Your data remains at ' + DataPath, mbError, MB_OK);
           DeleteFile(DataPath + '\app.log');
+          DelTree(DataPath + '\backups', True, True, True);
           RemoveDir(DataPath);
         end;
       end;

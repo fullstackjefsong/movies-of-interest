@@ -35,22 +35,39 @@ async function api(route, method = 'GET', data) {
 async function action(callback) {
   try { await callback(); } catch (error) { notify(error.message, true); }
 }
+const SETTING_FIELDS = ['banner', 'tagline', 'background', 'accent', 'country', 'layout', 'theme', 'font', 'cardSize', 'corners', 'backgroundOpacity', 'backgroundBlur', 'songLabsLogo', 'showStats'];
+const PRESETS = [
+  ['Midnight gold', { theme: 'dark', background: '#10141c', accent: '#e8c782' }],
+  ['Film noir', { theme: 'dark', background: '#0b0b0c', accent: '#d9d9d9' }],
+  ['Velvet curtain', { theme: 'dark', background: '#1a0d12', accent: '#e0727f' }],
+  ['Deep ocean', { theme: 'dark', background: '#0b1a24', accent: '#6cc4d9' }],
+  ['Evergreen', { theme: 'dark', background: '#0f1a14', accent: '#9fd18b' }],
+  ['Daylight', { theme: 'light', background: '#f4f1ea', accent: '#9a6b12' }],
+  ['Paper & ink', { theme: 'light', background: '#fbfbf8', accent: '#2f5fb3' }],
+];
+const SORT_COLUMNS = { title: 'title', year: 'year', rating: 'rating', runtime: 'runtime', director: 'director', viewedAt: 'viewedAt', added: 'added' };
 async function load() {
   state = await (await api('state')).json();
   applyAppearance();
   renderLibrary();
   renderReports();
   for (const el of $$('.data-path')) el.textContent = state.dataDir;
+  $('#app-version').textContent = 'v' + state.version;
   $('#uninstall').disabled = !state.installed;
   $('#uninstall').title = state.installed ? '' : 'Available after installing the Windows release.';
 }
-function applyAppearance() {
-  const settings = state.settings;
-  document.documentElement.style.setProperty('--bg', settings.background);
-  document.documentElement.style.setProperty('--accent', settings.accent);
+function applyAppearance(settings = state.settings) {
+  const root = document.documentElement;
+  root.style.setProperty('--bg', settings.background);
+  root.style.setProperty('--accent', settings.accent);
+  root.style.setProperty('--ambient-opacity', String(settings.backgroundOpacity / 100));
+  root.style.setProperty('--ambient-blur', settings.backgroundBlur + 'px');
+  Object.assign(root.dataset, { theme: settings.theme, font: settings.font, cardSize: settings.cardSize, corners: settings.corners, labsLogo: settings.songLabsLogo });
+  $('meta[name="theme-color"]').content = settings.background;
   $('.ambient').style.backgroundImage = settings.backgroundImage ? `url("${settings.backgroundImage}")` : 'none';
   $('#banner').textContent = settings.banner;
   $('#tagline').textContent = settings.tagline;
+  $('#stats').hidden = !settings.showStats;
   document.title = settings.banner + ' · Movies of Interest';
 }
 function stats() {
@@ -85,6 +102,28 @@ function poster(item, className = 'poster') {
   return safeUrl(item.poster) ? `<img class="${className}" src="${safeUrl(item.poster)}" alt="${escape(item.title)} poster" loading="lazy">`
     : `<div class="${className} poster-placeholder"><img src="/logo.svg" alt=""><span>${escape(item.title)}</span></div>`;
 }
+function detailsTable(items) {
+  const sort = $('#sort').value;
+  const header = (key, label, className = '') => {
+    const active = sort === key || (key === 'added' && sort === 'newest');
+    const direction = key === 'added' ? (sort === 'newest' ? 'descending' : 'ascending') : (['year', 'rating', 'viewedAt'].includes(key) ? 'descending' : 'ascending');
+    return `<th class="${className}" ${active ? `aria-sort="${direction}"` : ''}><button type="button" class="sort-header${active ? ' active' : ''}" data-sort-by="${key}">${label}${active ? (direction === 'descending' ? ' ▾' : ' ▴') : ''}</button></th>`;
+  };
+  const rows = items.map(item => `<tr class="${item.viewed ? 'is-viewed' : ''}">
+    <td class="col-thumb"><button class="thumb-button" data-detail="${item.id}" aria-label="Details for ${escape(item.title)}">${poster(item, 'thumb')}</button></td>
+    <td class="col-title"><button class="card-title" data-detail="${item.id}">${escape(item.title)}</button>${item.summary ? `<span class="row-summary">${escape(item.summary)}</span>` : ''}</td>
+    <td>${item.year || '—'}</td>
+    <td class="col-kind"><span class="kind-pill">${item.kind === 'tv' ? 'TV' : 'Movie'}</span></td>
+    <td>${item.rating !== null ? `<span class="rating">★ ${Number(item.rating).toFixed(1)}</span>` : '—'}</td>
+    <td class="col-runtime">${item.runtime ? item.runtime + ' min' : '—'}</td>
+    <td class="col-genres">${escape(item.genres.slice(0, 3).join(', ') || '—')}</td>
+    <td class="col-director">${escape(item.directors.slice(0, 2).join(', ') || '—')}</td>
+    <td class="col-cast">${escape(item.cast.slice(0, 3).join(', ') || '—')}</td>
+    <td class="col-added">${new Date(item.addedAt).toLocaleDateString()}</td>
+    <td class="col-viewed"><button class="watch-toggle compact ${item.viewed ? 'viewed' : ''}" data-watch="${item.id}" aria-pressed="${item.viewed}" aria-label="${item.viewed ? 'Viewed. Mark ' + escape(item.title) + ' as not viewed' : 'Mark ' + escape(item.title) + ' as viewed'}">${item.viewed ? '✓ Viewed' : '○ Mark'}</button></td>
+  </tr>`).join('');
+  return `<div class="details-wrap"><table class="details-table"><thead><tr><th class="col-thumb"><span class="sr-only">Poster</span></th>${header('title', 'Title', 'col-title')}${header('year', 'Year')}<th class="col-kind">Type</th>${header('rating', 'Rating')}${header('runtime', 'Runtime', 'col-runtime')}<th class="col-genres">Genres</th>${header('director', 'Director', 'col-director')}<th class="col-cast">Leads</th>${header('added', 'Added', 'col-added')}${header('viewedAt', 'Viewed', 'col-viewed')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 function renderLibrary() {
   $('#stats').innerHTML = stats();
   const selectedGenre = $('#genre-filter').value;
@@ -92,8 +131,12 @@ function renderLibrary() {
   $('#genre-filter').innerHTML = '<option value="">All genres</option>' + genres.map(value => `<option value="${escape(value)}">${escape(value)}</option>`).join('');
   if (genres.includes(selectedGenre)) $('#genre-filter').value = selectedGenre;
   const items = visibleEntries();
+  const layout = state.settings.layout;
   $('#result-count').textContent = `${items.length} of ${state.entries.length} titles`;
-  $('#collection').classList.toggle('list', state.settings.layout === 'list');
+  $$('[data-view]').forEach(el => { el.classList.toggle('selected', el.dataset.view === layout); el.setAttribute('aria-pressed', String(el.dataset.view === layout)); });
+  $('#collection').classList.toggle('list', layout === 'list');
+  $('#collection').classList.toggle('details', layout === 'details' && items.length > 0);
+  if (layout === 'details' && items.length) { $('#collection').innerHTML = detailsTable(items); return; }
   $('#collection').innerHTML = items.length ? items.map(item => `<article class="card">
     <button class="poster-button" data-detail="${item.id}" aria-label="Details for ${escape(item.title)}">${poster(item)}<span class="poster-badge">${item.kind === 'tv' ? 'TV SHOW' : 'MOVIE'}</span>${item.viewed ? '<span class="watched-badge">✓ VIEWED</span>' : ''}</button>
     <div class="card-content"><button class="card-title" data-detail="${item.id}">${escape(item.title)}</button><div class="meta">${item.year || 'Year unknown'} · ${item.runtime ? item.runtime + ' min' : (item.kind === 'tv' ? 'TV series' : 'Film')}${item.rating !== null ? ` · <span class="rating">★ ${Number(item.rating).toFixed(1)}</span>` : ''}</div><div class="genres">${escape(item.genres.join(' · ') || 'Genre not available')}</div><button class="watch-toggle ${item.viewed ? 'viewed' : ''}" data-watch="${item.id}" aria-pressed="${item.viewed}">${item.viewed ? '✓ Viewed · undo' : '○ Mark as viewed'}</button></div></article>`).join('')
@@ -155,18 +198,41 @@ function confirmAction(heading, message, phrase, callback) {
 }
 function populateSettings() {
   const form = $('#settings-form');
-  for (const key of ['banner', 'tagline', 'background', 'accent', 'country', 'layout']) form.elements[key].value = state.settings[key];
+  for (const key of SETTING_FIELDS) {
+    if (form.elements[key].type === 'checkbox') form.elements[key].checked = state.settings[key];
+    else form.elements[key].value = state.settings[key];
+  }
   form.elements.tmdbToken.value = '';
   $('#remove-token').checked = false;
   $('#credential-status').textContent = state.settings.hasTmdbToken ? 'A credential is saved. Leave blank to keep it.' : 'No credential saved. Keyless lookup is active.';
   backgroundImage = undefined;
   $('#background-upload').value = '';
+  $('#presets').innerHTML = PRESETS.map(([name, value], index) => `<button type="button" class="preset" data-preset="${index}" style="--preset-bg:${value.background};--preset-accent:${value.accent}"><span class="swatch" aria-hidden="true"></span>${escape(name)}</button>`).join('');
+  previewSettings();
+}
+function formSettings() {
+  const form = $('#settings-form');
+  const data = {};
+  for (const key of SETTING_FIELDS) {
+    const field = form.elements[key];
+    data[key] = field.type === 'checkbox' ? field.checked : field.type === 'range' ? Number(field.value) : field.value;
+  }
+  data.country = data.country.toUpperCase();
+  return data;
+}
+function previewSettings() {
+  const data = { ...state.settings, ...formSettings() };
+  if (backgroundImage !== undefined) data.backgroundImage = backgroundImage;
+  $('#opacity-value').textContent = data.backgroundOpacity + '%';
+  $('#blur-value').textContent = data.backgroundBlur + ' px';
+  applyAppearance(data);
 }
 function tab(name) {
   if (!['library', 'reports', 'export', 'settings'].includes(name)) name = 'library';
   $$('.tab').forEach(el => { el.hidden = el.id !== name; });
   $$('.nav').forEach(el => { el.classList.toggle('active', el.dataset.tab === name); el.setAttribute('aria-current', el.dataset.tab === name ? 'page' : 'false'); });
   if (name === 'settings') populateSettings();
+  else applyAppearance();
   location.hash = name;
 }
 document.addEventListener('click', event => {
@@ -176,6 +242,25 @@ document.addEventListener('click', event => {
   if (button.dataset.close) $('#' + button.dataset.close).close();
   if (button.id === 'add-open' || button.hasAttribute('data-add')) $('#add-dialog').showModal();
   if (button.dataset.filter) { filter = button.dataset.filter; $$('[data-filter]').forEach(el => el.classList.toggle('selected', el === button)); renderLibrary(); }
+  if (button.dataset.view && button.dataset.view !== state.settings.layout) action(async () => {
+    const previous = state.settings.layout;
+    state.settings.layout = button.dataset.view;
+    renderLibrary();
+    try { await api('settings', 'PUT', { layout: button.dataset.view }); }
+    catch (error) { state.settings.layout = previous; renderLibrary(); throw error; }
+  });
+  if (button.dataset.sortBy && Object.hasOwn(SORT_COLUMNS, button.dataset.sortBy)) {
+    const key = button.dataset.sortBy;
+    $('#sort').value = key === 'added' ? ($('#sort').value === 'added' ? 'newest' : 'added') : key;
+    renderLibrary();
+    $(`[data-sort-by="${key}"]`)?.focus();
+  }
+  if (button.dataset.preset !== undefined) {
+    const [, preset] = PRESETS[Number(button.dataset.preset)];
+    const form = $('#settings-form');
+    for (const [key, value] of Object.entries(preset)) form.elements[key].value = value;
+    previewSettings();
+  }
   if (button.dataset.detail) showDetail(Number(button.dataset.detail));
   if (button.dataset.watch) action(async () => {
     button.disabled = true;
@@ -259,9 +344,7 @@ $('#settings-form').addEventListener('submit', event => {
     const button = form.querySelector('[type=submit]');
     button.disabled = true;
     try {
-      const data = {};
-      for (const key of ['banner', 'tagline', 'background', 'accent', 'country', 'layout']) data[key] = form.elements[key].value;
-      data.country = data.country.toUpperCase();
+      const data = formSettings();
       if ($('#remove-token').checked) data.tmdbToken = '';
       else if (form.elements.tmdbToken.value.trim()) data.tmdbToken = form.elements.tmdbToken.value.trim();
       if (backgroundImage !== undefined) data.backgroundImage = backgroundImage;
@@ -281,11 +364,13 @@ $('#background-upload').addEventListener('change', event => action(async () => {
     reader.onerror = () => reject(new Error('The background image could not be read.'));
     reader.readAsDataURL(file);
   });
-  notify('Image ready. Save preferences to apply it.');
+  notify('Image previewed. Save preferences to keep it.');
+  previewSettings();
 }));
-$('#clear-background').addEventListener('click', () => { backgroundImage = ''; $('#background-upload').value = ''; notify('Save preferences to remove the image.'); });
+$('#clear-background').addEventListener('click', () => { backgroundImage = ''; $('#background-upload').value = ''; previewSettings(); notify('Background removed from the preview. Save preferences to keep this change.'); });
+$('#settings-form').addEventListener('input', event => { if (event.target.name !== 'tmdbToken') previewSettings(); });
 $('#reset-appearance').addEventListener('click', () => action(async () => {
-  await api('settings', 'PUT', { banner: 'Movies of Interest', tagline: 'Your next great watch starts here.', background: '#10141c', accent: '#e8c782', backgroundImage: '', layout: 'grid' });
+  await api('settings', 'PUT', state.defaults);
   await load(); populateSettings(); notify('Appearance reset.');
 }));
 $('#stop').addEventListener('click', () => confirmAction('Stop the local server?', 'This page will disconnect. Your data is kept. Restart from the Start menu or at the next Windows sign-in.', 'STOP', async () => {

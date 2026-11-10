@@ -26,7 +26,14 @@ async function build() {
   if (!fs.existsSync(license)) throw new Error('Node runtime LICENSE file missing beside node.exe. Obtain the matching official runtime distribution.');
   fs.copyFileSync(license, path.join(dist, 'NODE-LICENSE.txt'));
   const metadata = fs.readFileSync(path.join(root, 'metadata.cjs'), 'utf8');
-  const app = fs.readFileSync(path.join(root, 'app.cjs'), 'utf8').replace("require('./metadata.cjs')", () => `(() => { const module = { exports: {} };\n${metadata}\nreturn module.exports; })()`);
+  const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const source = fs.readFileSync(path.join(root, 'app.cjs'), 'utf8');
+  for (const needle of ["require('./metadata.cjs')", "require('./package.json').version"]) {
+    if (!source.includes(needle)) throw new Error(`Bundler expected ${needle} in app.cjs.`);
+  }
+  // Function replacers keep `$` sequences in bundled sources literal.
+  const app = source.replace("require('./metadata.cjs')", () => `(() => { const module = { exports: {} };\n${metadata}\nreturn module.exports; })()`)
+    .replace("require('./package.json').version", () => JSON.stringify(version));
   const bundle = path.join(dist, 'bundle.cjs');
   fs.writeFileSync(bundle, app);
   const assets = {};
@@ -55,8 +62,9 @@ async function build() {
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Inno Setup 6', 'ISCC.exe')];
   const compiler = candidates.find(value => value && fs.existsSync(value));
   if (!compiler) throw new Error('Executable built. Install Inno Setup or set ISCC_PATH to compile the setup wizard.');
-  run(compiler, [path.join(root, 'installer', 'MoviesOfInterest.iss')]);
-  const setup = path.join(dist, 'MoviesOfInterest-Setup-1.0.1.exe');
+  for (const name of fs.readdirSync(dist)) if (/^MoviesOfInterest-Setup-.*\.exe$/.test(name)) fs.unlinkSync(path.join(dist, name));
+  run(compiler, [`/DAppVersion=${version}`, path.join(root, 'installer', 'MoviesOfInterest.iss')]);
+  const setup = path.join(dist, `MoviesOfInterest-Setup-${version}.exe`);
   const hash = crypto.createHash('sha256').update(fs.readFileSync(setup)).digest('hex');
   fs.writeFileSync(path.join(dist, 'SHA256SUMS.txt'), `${hash}  ${path.basename(setup)}\n`);
   console.log('Built installer and SHA256SUMS.txt in dist.');
